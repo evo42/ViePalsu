@@ -413,3 +413,6 @@ body.task article hr {
     background: url('/static/icons/transmit_error.png') no-repeat 0px 0px;
 }
 
+#chat-input a, div[property="mgd:agenda"] a {
+    text-decoration: underline;
+}
