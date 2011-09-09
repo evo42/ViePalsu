@@ -8,12 +8,11 @@ VIE = require '../js/vie.js'
 auth = require 'connect-auth'
 sys = require 'sys'
 require './vie-redis.coffee'
-RedisStore = require 'connect-redis'
+RedisStore = require('connect-redis')(express)
 querystring = require 'querystring'
 #require '../js/auth/auth.strategies/linkedin.js'
 fs = require 'fs'
 jsdom = require 'jsdom'
-browserify = require 'browserify'
 ProxyRequest = require 'request'
 
 configFile = "configuration.json"
@@ -89,9 +88,6 @@ server.configure ->
     server.use '/js', express.static "#{process.cwd()}/js"
     server.use '/static', express.static "#{process.cwd()}/static"
     server.use '/deps', express.static "#{process.cwd()}/deps"
-    server.use browserify
-        require: [ 'jquery-browserify' ]
-
     server.use connect.cookieParser()
     server.use connect.bodyParser()
 
@@ -463,44 +459,44 @@ server.get '/proxy', (request, response) ->
     return
 
 # start server
-server.listen(cfg.port)
+server.listen cfg.port, ->
+    console.log "Palsu is listening to #{cfg.port}"
 
 # ## Handling sockets
 socket = io.listen server
 
 # Handle a new connected client
-socket.on 'connection', (client) ->
-    client.on 'message', (data) ->
-        if typeof data isnt 'object'
-            # We got a user identifier, mark as online
-            user = VIE.EntityManager.getByJSONLD
-                '@': data
-            client.userInstance = user
-            user.fetch
-                success: (user) ->
-                    user.set
-                        'iks:online': 1
-                    for clientId, clientObject of socket.clients
-                        clientObject.send user.toJSONLD()
-                    user.save()
-            return
+socket.sockets.on "connection", (client) ->
 
+    client.on "onlinestate", (identifier) ->
+        # We got a user identifier, mark as online
+        user = VIE.EntityManager.getByJSONLD
+            '@': identifier
+        client.userInstance = user
+        user.fetch
+            success: (user) ->
+                user.set
+                    'iks:online': 1
+                user.save()
+
+                # Notify all users
+                socket.sockets.emit "onlinestate", user.toJSONLD()
+
+    client.on "update", (data) ->
         # Generate a RDF Entity instance for the JSON-LD we got from the client
-        modelInstance = VIE.EntityManager.getByJSONLD(data)
+        modelInstance = VIE.EntityManager.getByJSONLD data
         modelInstance.save()
 
         # Send the item back to everybody else
-        for clientId, clientObject of socket.clients
-            if clientObject isnt client
-                console.log "Forwarding data to #{clientId}"
-                clientObject.send data
+        client.broadcast.emit "update", data
 
-    client.on 'disconnect', ->
-        if not client.userInstance then return
+    client.on "disconnect", ->
+        return unless client.userInstance
 
-        # Mark user as offline and notify other users
+        # Mark user as offline
         client.userInstance.set
             'iks:online': 0
-        for clientId, clientObject of socket.clients
-            clientObject.send client.userInstance.toJSONLD()
-            client.userInstance.save()
+        client.userInstance.save()
+
+        # Notify all users
+        socket.sockets.emit "onlinestate", client.userInstance.toJSONLD()
